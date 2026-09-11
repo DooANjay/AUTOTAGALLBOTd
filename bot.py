@@ -2,26 +2,23 @@ import telebot
 import re
 import os
 
-# Mengambil kredensial secara aman dari Environment Variables di Railway
 TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 
+# Mengaktifkan bot secara agresif
 bot = telebot.TeleBot(TOKEN, threaded=False)
 
-# PEMBERSIHAN TOTAL: Menghapus sisa-sisa webhook lama dari PythonAnywhere
+# PEMBERSIHAN SEKALI LAGI
 try:
-    print("Sedang membersihkan jalur webhook lama...")
     bot.remove_webhook()
     bot.delete_webhook(drop_pending_updates=True)
-    print("Jalur koneksi berhasil dibersihkan dan siap digunakan!")
+    print("Jalur Telegram dibersihkan secara total!")
 except Exception as e:
-    print(f"Gagal membersihkan update: {e}")
+    print(f"Error clean: {e}")
 
-# Database sederhana dalam memori
-group_members = {}       # Menyimpan data anggota aktif per grup
-partner_database = {}    # Menyimpan data: {LINK_GRUP: CHAT_ID_GRUP}
+group_members = {}       
+partner_database = {}    
 
-# Fungsi otomatis mencatat ID Grup dan Anggotanya saat ada aktivitas
 def record_activity(chat_id, user):
     if user.is_bot:
         return
@@ -34,53 +31,40 @@ def handle_new_member(message):
     for member in message.new_chat_members:
         record_activity(message.chat.id, member)
 
-@bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'sticker'])
+@bot.message_handler(func=lambda message: message.chat.type != "private", content_types=['text', 'photo', 'video', 'sticker'])
 def track_active_members(message):
-    if message.chat.type != "private":
-        # Otomatis merekam ID Grup secara diam-diam saat grup aktif
-        record_activity(message.chat.id, message.from_user)
+    record_activity(message.chat.id, message.from_user)
 
-# ==================== MANAGEMEN PARTNER (DI PM OWNER) ====================
+# ==================== PERINTAH UTAMA (PASTI DIRESPOND TELEGRAM) ====================
 
-# Cara pakai di PM Owner: /addpartner https://t.me
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    teks = (
+        "👋 **Bot Tagall Broadcast Aktif!**\n\n"
+        "**Cara Kirim Broadcast Tagall:**\n"
+        "Ketik kata-kata Anda langsung di chat ini dan **wajib masukkan link grup partner**.\n\n"
+        "Atau jika teks biasa tidak merespon, gunakan perintah:\n"
+        "`/broadcast kata-kata Anda beserta https://t.me`"
+    )
+    bot.reply_to(message, teks, parse_mode="Markdown")
+
 @bot.message_handler(commands=['addpartner'])
 def add_partner_link(message):
     if message.from_user.id != OWNER_ID:
         bot.reply_to(message, "❌ Hanya untuk Owner Bot!")
         return
-    
     command_parts = message.text.split(" ", 1)
     if len(command_parts) < 2:
         bot.reply_to(message, "💡 **Cara pakai:** `/addpartner [LINK_GRUP]`")
         return
-        
     link_target = command_parts[1].strip()
-    
-    # Cari ID Grup yang aktif terakhir kali dari database sementara
     if not group_members:
-        bot.reply_to(message, "❌ **Gagal Mendaftar!** Bot belum merekam grup aktif apa pun.\n\n"
-                              "Silakan ketik teks apa saja di dalam grup Anda terlebih dahulu agar bot mengenali grupnya!")
+        bot.reply_to(message, "❌ **Gagal Mendaftar!** Bot belum merekam aktivitas grup aktif.\n\nKetik sepatah kata dulu di grup Anda!")
         return
-        
     last_active_chat_id = list(group_members.keys())[-1]
     partner_database[link_target] = last_active_chat_id
     bot.reply_to(message, f"✅ **Link Sukses Terdaftar!**\n🔗 {link_target}")
 
-# Cara pakai di PM Owner: /delpartner https://t.me
-@bot.message_handler(commands=['delpartner'])
-def remove_partner_link(message):
-    if message.from_user.id != OWNER_ID:
-        return
-    command_parts = message.text.split(" ", 1)
-    if len(command_parts) >= 2:
-        link_target = command_parts[1].strip()
-        if link_target in partner_database:
-            del partner_database[link_target]
-            bot.reply_to(message, "⚠️ Link partner berhasil dihapus.")
-            return
-    bot.reply_to(message, "❌ Link tidak ditemukan.")
-
-# Melihat daftar link yang terdaftar lewat PM Owner: /listpartner
 @bot.message_handler(commands=['listpartner'])
 def list_partner_links(message):
     if message.from_user.id != OWNER_ID:
@@ -93,28 +77,10 @@ def list_partner_links(message):
         teks += f"{idx}. {link}\n"
     bot.reply_to(message, teks)
 
-# ==================== PROSES SIARAN PM (VERIFIKASI LINK + EMOJI) ====================
+# ==================== PROSES SIARAN (DUA JALUR: TEKS BIASA & COMMAND) ====================
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    if message.chat.type == "private":
-        teks = (
-            "👋 **Selamat datang di Bot Tagall Broadcast!**\n\n"
-            "Silakan kirimkan kata-kata Anda **wajib menyertakan link grup partner** yang valid di dalam pesannya.\n\n"
-            "⚠️ Jika link grup salah atau tidak terdaftar, permintaan broadcast akan otomatis ditolak!"
-        )
-        bot.reply_to(message, teks, parse_mode="Markdown")
-
-@bot.message_handler(func=lambda message: message.chat.type == "private", content_types=['text'])
-def handle_pm_broadcast(message):
-    if message.text.startswith('/'):
-        return
-
-    pesan_user = message.text
-    
-    # Mencari apakah ada teks berformat link di dalam pesan user
-    links_found = re.findall(r'(https?://[^\s]+)', pesan_user)
-    
+def proses_tagall(message, teks_sumber):
+    links_found = re.findall(r'(https?://[^\s]+)', teks_sumber)
     target_chat_id = None
     for link in links_found:
         if link in partner_database:
@@ -122,20 +88,16 @@ def handle_pm_broadcast(message):
             break
             
     if not target_chat_id:
-        bot.reply_to(message, "❌ **Ditolak!** Teks Anda wajib menyertakan link grup partner yang sudah terdaftar!")
+        bot.reply_to(message, "❌ **Ditolak!** Wajib menyertakan link grup partner yang terdaftar!")
         return
 
-    bot.reply_to(message, "🔄 Link cocok! Mengirim tagall emoji ke grup...")
-
-    mentions = f"📢 **PENGUMUMAN BARU**\n\n{pesan_user}\n\n"
+    bot.reply_to(message, "🔄 Mengirim tagall emoji ke grup...")
+    mentions = f"📢 **PENGUMUMAN BARU**\n\n{teks_sumber}\n\n"
     count = 0
     
-    # Ambil data anggota grup tujuan
     for user_id in group_members[target_chat_id].keys():
         mentions += f"[👤](tg://user?id={user_id}) "
         count += 1
-        
-        # Kirim per 10 emoji agar chat grup tetap rapi
         if count % 10 == 0:
             try:
                 bot.send_message(target_chat_id, mentions, parse_mode="Markdown", disable_web_page_preview=False)
@@ -148,9 +110,24 @@ def handle_pm_broadcast(message):
             bot.send_message(target_chat_id, mentions, parse_mode="Markdown", disable_web_page_preview=False)
         except Exception:
             pass
+    bot.reply_to(message, f"✅ Sukses melakukan tagall!")
 
-    bot.reply_to(message, f"✅ Sukses melakukan tagall ke grup partner!")
+# Jalur Alternatif 1: Menggunakan awalan /broadcast
+@bot.message_handler(commands=['broadcast'])
+def handle_command_broadcast(message):
+    command_parts = message.text.split(" ", 1)
+    if len(command_parts) < 2:
+        bot.reply_to(message, "💡 Format salah. Gunakan `/broadcast teks Anda beserta link`")
+        return
+    proses_tagall(message, command_parts[1].strip())
 
-print("Bot Tagall Jarak Jauh siap berjalan di Railway...")
+# Jalur Alternatif 2: Menggunakan teks biasa di PM
+@bot.message_handler(func=lambda message: message.chat.type == "private", content_types=['text'])
+def handle_pm_text_broadcast(message):
+    if message.text.startswith('/'):
+        return
+    proses_tagall(message, message.text)
+
+print("Bot Tagall Aktif di Railway...")
 bot.infinity_polling()
 
