@@ -2,11 +2,20 @@ import telebot
 import re
 import os
 
-# Mengambil kredensial secara aman dari sistem Environment Variables di Railway
+# Mengambil kredensial secara aman dari Environment Variables di Railway
 TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
+
+# PEMBERSIHAN TOTAL: Menghapus sisa-sisa webhook lama dari PythonAnywhere
+try:
+    print("Sedang membersihkan jalur webhook lama...")
+    bot.remove_webhook()
+    bot.delete_webhook(drop_pending_updates=True)
+    print("Jalur koneksi berhasil dibersihkan dan siap digunakan!")
+except Exception as e:
+    print(f"Gagal membersihkan update: {e}")
 
 # Database sederhana dalam memori
 group_members = {}       # Menyimpan data anggota aktif per grup
@@ -142,8 +151,6 @@ def handle_pm_broadcast(message):
 
     bot.reply_to(message, f"✅ Sukses melakukan tagall ke grup partner!")
 
-# Otomatis menghapus antrean pesan sampah saat bot dinyalakan ulang
-bot.delete_webhook(drop_pending_updates=True)
-
 print("Bot Tagall Jarak Jauh siap berjalan di Railway...")
 bot.infinity_polling()
+
